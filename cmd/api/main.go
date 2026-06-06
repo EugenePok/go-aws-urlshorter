@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 	"urlshortener/internal/api"
+	"urlshortener/internal/cache"
 	"urlshortener/internal/shortener"
 	"urlshortener/internal/store"
 )
@@ -25,6 +26,7 @@ func main() {
 		log.Error("failed to build store", "err", err)
 		os.Exit(1)
 	}
+	st = maybeWrapCache(st, log)
 	svc := shortener.NewService(st)
 	h := api.NewHandler(svc, baseUrl, log)
 
@@ -55,9 +57,30 @@ func main() {
 	}
 }
 
-func getenv(key, def string) string {
+func maybeWrapCache(base store.Store, log *slog.Logger) store.Store {
+	addr := os.Getenv("REDIS_ADDR")
+	if addr == "" {
+		log.Info("cache disabled (REDIS_ADDR unset)")
+		return base
+	}
+	ttl := getDuration("CACHE_TTL", 5*time.Minute)
+	redisCache := cache.NewRedis(addr)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := redisCache.Ping(ctx); err != nil {
+		log.Warn("redis unreachable at startup; will serve from store and retry lazily", "err", err, "addr", addr)
+	} else {
+		log.Info("redis cache enabled", "addr", addr, "ttl", ttl.String())
+	}
+	return store.NewCached(base, redisCache, ttl, log)
+}
+
+func getDuration(key string, def time.Duration) time.Duration {
 	if v := os.Getenv(key); v != "" {
-		return v
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
 	}
 	return def
 }
@@ -86,4 +109,11 @@ func buildStore(ctx context.Context, log *slog.Logger) (store.Store, error) {
 		log.Info("using in-memory store")
 		return store.NewMemory(), nil
 	}
+}
+
+func getenv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }
