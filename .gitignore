@@ -1,0 +1,15 @@
+# Compiled binaries
+/bin/
+*.exe
+urlshortener
+
+# Local environment
+.env
+.env.local
+
+# macOS
+.DS_Store
+
+# Test / coverage output
+*.out
+coverage.*
