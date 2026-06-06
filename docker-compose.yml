@@ -1,0 +1,18 @@
+# Local dependencies for development and integration tests.
+services:
+  localstack:
+    image: localstack/localstack:3
+    ports:
+      - "4566:4566" # single edge port for all AWS services
+    environment:
+      - SERVICES=dynamodb
+      - DEBUG=0
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://localhost:4566/_localstack/health || exit 1",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12

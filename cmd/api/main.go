@@ -20,7 +20,11 @@ func main() {
 	addr := getenv("ADDR", ":8080")
 	baseUrl := getenv("BASE_URL", "http://localhost:8080")
 
-	st := store.NewMemory()
+	st, err := buildStore(context.Background(), log)
+	if err != nil {
+		log.Error("failed to build store", "err", err)
+		os.Exit(1)
+	}
 	svc := shortener.NewService(st)
 	h := api.NewHandler(svc, baseUrl, log)
 
@@ -56,4 +60,30 @@ func getenv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func buildStore(ctx context.Context, log *slog.Logger) (store.Store, error) {
+	switch getenv("STORE", "memory") {
+	case "dynamodb":
+		endpoint := getenv("AWS_ENDPOINT_URL", "")
+		client, err := store.NewDynamoClient(ctx, store.DynamoClientConfig{
+			Region:   getenv("AWS_REGION", "us-east-1"),
+			Endpoint: endpoint,
+		})
+		if err != nil {
+			return nil, err
+		}
+		table := getenv("DYNAMODB_TABLE", "url_shortener_links")
+		//only auto-create on localstack not AWS.
+		if endpoint != "" {
+			if err := store.EnsureTable(ctx, client, table); err != nil {
+				return nil, err
+			}
+		}
+		log.Info("using dynamodb store", "table", table, "endpoint", endpoint)
+		return store.NewDynamo(client, table), nil
+	default:
+		log.Info("using in-memory store")
+		return store.NewMemory(), nil
+	}
 }
