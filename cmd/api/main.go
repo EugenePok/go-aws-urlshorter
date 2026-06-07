@@ -16,6 +16,11 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		runHealthcheck()
+		return
+	}
+
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	addr := getenv("ADDR", ":8080")

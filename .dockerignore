@@ -1,0 +1,13 @@
+# Keep the build context small and reproducible.
+.git
+.gitignore
+.dockerignore
+Dockerfile
+docker-compose.yml
+*.md
+bin/
+*.out
+coverage.*
+.DS_Store
+.env
+.env.local
