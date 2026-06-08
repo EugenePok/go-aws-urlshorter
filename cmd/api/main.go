@@ -11,6 +11,7 @@ import (
 	"time"
 	"urlshortener/internal/api"
 	"urlshortener/internal/cache"
+	"urlshortener/internal/events"
 	"urlshortener/internal/shortener"
 	"urlshortener/internal/store"
 )
@@ -33,7 +34,12 @@ func main() {
 	}
 	st = maybeWrapCache(st, log)
 	svc := shortener.NewService(st)
-	h := api.NewHandler(svc, baseUrl, log)
+	publisher, closePublisher, err := buildPublisher(context.Background(), log)
+	if err != nil {
+		log.Error("failed to build publisher", "err", err)
+		os.Exit(1)
+	}
+	h := api.NewHandler(svc, publisher, baseUrl, log)
 
 	srv := &http.Server{
 		Addr:              addr,
@@ -60,6 +66,7 @@ func main() {
 	if err := srv.Shutdown(shutdownctx); err != nil {
 		log.Error("shutdown error", "err", err)
 	}
+	closePublisher()
 }
 
 func maybeWrapCache(base store.Store, log *slog.Logger) store.Store {
@@ -114,6 +121,36 @@ func buildStore(ctx context.Context, log *slog.Logger) (store.Store, error) {
 		log.Info("using in-memory store")
 		return store.NewMemory(), nil
 	}
+}
+
+func buildPublisher(ctx context.Context, log *slog.Logger) (events.Publisher, func(), error) {
+	if getenv("EVENTS", "noop") != "sqs" {
+		log.Info("click events disabled (EVENTS != sqs)")
+		return events.Noop{}, func() {}, nil
+	}
+
+	endpoint := os.Getenv("AWS_ENDPOINT_URL") // empty means real AWS
+	client, err := events.NewSQSClient(ctx, events.SQSClientConfig{
+		Region:   getenv("AWS_REGION", "us-east-1"),
+		Endpoint: endpoint,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	queueName := getenv("SQS_QUEUE_NAME", "url_shortener_clicks")
+	var queueURL string
+	if endpoint != "" {
+		queueURL, err = events.EnsureQueue(ctx, client, queueName)
+	} else {
+		queueURL, err = events.QueueURL(ctx, client, queueName)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	async := events.NewAsync(events.NewSQS(client, queueURL), 1024, 2, log)
+	log.Info("click events -> SQS", "queue", queueName, "url", queueURL)
+	return async, async.Close, nil
 }
 
 func getenv(key, def string) string {

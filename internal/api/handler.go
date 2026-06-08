@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
+	"urlshortener/internal/events"
 	"urlshortener/internal/shortener"
 	"urlshortener/internal/store"
 )
@@ -17,13 +19,18 @@ type Shortener interface {
 }
 
 type Handler struct {
-	svc     Shortener
-	baseUrl string
-	log     *slog.Logger
+	svc       Shortener
+	publisher events.Publisher
+	baseUrl   string
+	log       *slog.Logger
 }
 
-func NewHandler(svc Shortener, baseUrl string, log *slog.Logger) *Handler {
-	return &Handler{svc: svc, baseUrl: strings.TrimRight(baseUrl, "/"), log: log}
+func NewHandler(svc Shortener, publisher events.Publisher, baseUrl string, log *slog.Logger) *Handler {
+	return &Handler{
+		svc:       svc,
+		publisher: publisher,
+		baseUrl:   strings.TrimRight(baseUrl, "/"),
+		log:       log}
 }
 
 type shortenRequest struct {
@@ -73,7 +80,21 @@ func (h *Handler) Redirect(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, &errorResponse{Error: "internal server error"})
 		return
 	}
+
+	h.publishClick(r, code)
 	http.Redirect(w, r, longUrl, http.StatusMovedPermanently)
+}
+
+func (h *Handler) publishClick(r *http.Request, code string) {
+	err := h.publisher.PublishClick(r.Context(), events.ClickEvent{
+		Code:      code,
+		Timestamp: time.Now().UTC(),
+		UserAgent: r.UserAgent(),
+		Referer:   r.Referer(),
+	})
+	if err != nil {
+		h.log.Warn("publish click dropped", "err", err, "code", code)
+	}
 }
 
 func (h *Handler) Health(w http.ResponseWriter, _ *http.Request) {

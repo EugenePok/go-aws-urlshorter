@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -8,16 +9,28 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"urlshortener/internal/events"
 	"urlshortener/internal/shortener"
 	"urlshortener/internal/store"
 )
 
-func newTestRouter() *http.ServeMux {
+type recordingPublisher struct {
+	events []events.ClickEvent
+}
+
+func (r *recordingPublisher) PublishClick(_ context.Context, e events.ClickEvent) error {
+	r.events = append(r.events, e)
+	return nil
+}
+
+func newTestHandler(pub events.Publisher) *Handler {
 	svc := shortener.NewService(store.NewMemory())
-	h := NewHandler(svc,
-		"http://short.test",
+	return NewHandler(svc, pub, "http://short.test",
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
-	return NewRouter(h)
+}
+
+func newTestRouter() *http.ServeMux {
+	return NewRouter(newTestHandler(events.Noop{}))
 }
 
 func TestHandler_ShortenThenRedirect(t *testing.T) {
@@ -45,6 +58,44 @@ func TestHandler_ShortenThenRedirect(t *testing.T) {
 	}
 	if loc := rec.Header().Get("Location"); loc != "https://example.com" {
 		t.Errorf("Location = %q, want original URL", loc)
+	}
+}
+
+func TestHandler_Redirect_PublishesClick(t *testing.T) {
+	rec := &recordingPublisher{}
+	h := newTestHandler(rec)
+	router := NewRouter(h)
+
+	post := httptest.NewRecorder()
+	router.ServeHTTP(post, httptest.NewRequest(
+		http.MethodPost,
+		"/shorten",
+		strings.NewReader(`{"url":"https://example.com"}`)))
+
+	var resp shortenResponse
+	_ = json.NewDecoder(post.Body).Decode(&resp)
+
+	req := httptest.NewRequest(http.MethodGet, "/"+resp.Code, nil)
+	req.Header.Set("User-Agent", "test-agent")
+	router.ServeHTTP(httptest.NewRecorder(), req)
+	if len(rec.events) != 1 {
+		t.Fatalf("published %d click events, want 1", len(rec.events))
+	}
+	if rec.events[0].Code != resp.Code {
+		t.Errorf("click code = %q, want %q", rec.events[0].Code, resp.Code)
+	}
+	if rec.events[0].UserAgent != "test-agent" {
+		t.Errorf("click user-agent = %q, want test-agent", rec.events[0].UserAgent)
+	}
+}
+
+func TestHandler_Redirect_NotFound_DoesNotPublish(t *testing.T) {
+	rec := &recordingPublisher{}
+	handler := newTestHandler(rec)
+	router := NewRouter(handler)
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/missing", nil))
+	if len(rec.events) != 0 {
+		t.Errorf("published %d events on 404, want 0", len(rec.events))
 	}
 }
 
