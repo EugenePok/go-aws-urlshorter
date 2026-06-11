@@ -1,6 +1,8 @@
 # Local stack for development and integration tests.
-# LocalStack (DynamoDB).
-# Redis.
+# LocalStack (DynamoDB)
+# Redis
+# SQS
+# MySQL + worker
 # the api container itself.
 services:
   api:
@@ -55,3 +57,32 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  mysql:
+    image: mysql:8
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=urlshortener
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  worker:
+    build: .
+    entrypoint: ["/worker"]
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_REGION=us-east-1
+      - SQS_QUEUE_NAME=url_shortener_clicks
+      - MYSQL_DSN=root:root@tcp(mysql:3306)/urlshortener?parseTime=true&loc=UTC
+    depends_on:
+      localstack:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      disable: true
