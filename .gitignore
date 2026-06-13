@@ -13,3 +13,16 @@ urlshortener
 # Test / coverage output
 *.out
 coverage.*
+
+# Terraform — never commit state, local dirs, real tfvars, or plans.
+# (.terraform.lock.hcl IS committed: it pins provider versions.)
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+terraform.tfvars
+*.auto.tfvars
+override.tf
+override.tf.json
